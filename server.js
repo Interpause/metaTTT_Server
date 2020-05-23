@@ -1,9 +1,9 @@
 const http = require('http');
 const nedb = require('nedb');
 
-const enums = require("./enums");
-const sessManager = require("./sessionManager");
-const playerManager = require("./playerManager");
+const enums = require("./utils/enums");
+const sessManager = require("./managers/sessionManager");
+const playerManager = require("./managers/playerManager");
 
 //Adds player to session.
 function joinSession(gid,pid){

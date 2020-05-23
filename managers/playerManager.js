@@ -1,9 +1,8 @@
 const Filter = require("bad-words");
-const EventEmitter = require('events');
 let filter = new Filter();
 
-const enums = require("./enums");
-const agents = require("./agents");
+const enums = require("$/common/utils/enums");
+const agents = require("$/gameAI/agents");
 
 global.pidList = [];
 global.numPlayers = 0;
@@ -166,7 +165,7 @@ exports.runAI = function(id, sess){
 		if(!profile.bot) return;
 		if(sess.aiProc) return;
 		let game = sess.state;
-		if(game.plyrs[game.plyr] != id || game.winner != -1) return;
+		if(game.cur_player != id || game.winner != -1) return;
 		sess.aiProc = true;
 		agents[id](game,null,game.plyr).then(suggestion => {
 			sess.emit(enums.move,id,suggestion[0]);

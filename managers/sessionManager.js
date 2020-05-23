@@ -22,7 +22,7 @@ exports.init = function(db){
 			try{
 				//TODO: Private games, better save corruption checking and handling
 				//TODO: immediately returning from central database whether it is open and public etc...
-				if(save.plyrs.length < save.conf.plyr_no) gidList.openGames.push(save._id);
+				if(save.plyrs.length < save.conf.num_players) gidList.openGames.push(save._id);
 				else gidList.specGames.push(save._id);
 				gidList.allGames.push(save._id);
 				chain = chain.then(() => {return exports.getSess(save._id)}); //TEMP Forcefully caches everything
