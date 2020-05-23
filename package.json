@@ -27,6 +27,7 @@
   },
   "homepage": "https://github.com/Interpause/metaTTT_Server#readme",
   "dependencies": {
-    "basetag": "^1.0.0"
+    "bad-words": "^3.0.3",
+    "nedb": "^1.8.0"
   }
 }

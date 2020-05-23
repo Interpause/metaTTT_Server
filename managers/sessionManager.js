@@ -1,6 +1,6 @@
-const sessModule = require("./session");
-const EventEmitter = require('events');
-const enums = require("./enums");
+const Session = require("../common/classes/session");
+const enums = require("../common/utils/enums");
+const gconf = require("../common/utils/game_config");
 
 global.gidList = {};
 gidList.allGames = [];
@@ -12,7 +12,7 @@ global.numSessions = 0;
 let database = undefined;	//Currently nedb database, in future maybe some sort of service socket...
 
 //This function will likely change a lot in the future
-exports.init = function(db){
+module.exports.init = function(db){
 	database = undefined;
 	database = db;
 	return new Promise(callback => db.find({},(err,saves) => {
@@ -22,10 +22,10 @@ exports.init = function(db){
 			try{
 				//TODO: Private games, better save corruption checking and handling
 				//TODO: immediately returning from central database whether it is open and public etc...
-				if(save.plyrs.length < save.conf.num_players) gidList.openGames.push(save._id);
+				if(save.player_ids.length < save.config.num_players) gidList.openGames.push(save._id);
 				else gidList.specGames.push(save._id);
 				gidList.allGames.push(save._id);
-				chain = chain.then(() => {return exports.getSess(save._id)}); //TEMP Forcefully caches everything
+				chain = chain.then(() => {return module.exports.getSess(save._id)}); //TEMP Forcefully caches everything
 				i++;
 			}catch(e){
 				console.log(`Session ${save._id} is corrupted!`);
@@ -50,7 +50,7 @@ function checkInit(){
 }
 
 //Returns a promise that resolves to the gameState, of course this being a reference to the actual thing
-exports.getSess = function(id){
+module.exports.getSess = function(id){
 	checkInit();
 	if(id == null) return Promise.reject(new Error("Missing session id in param"));
 	if(sessCache[id] == undefined){
@@ -60,10 +60,10 @@ exports.getSess = function(id){
 				//reject(new Error(enums.unfound));
 				callback(enums.unfound);
 			}else{
-				let game = Object.assign(new EventEmitter(),sessModule.createSession());
-				sessModule.restoreSession(game,save[0]);
-				sessModule.start(game);
-				exports.pushSess(id,game);
+				let game = new Session();
+				game.restoreSession(save[0]);
+				game.start();
+				module.exports.pushSess(id,game);
 				callback(sessCache[id]);
 			}
 		}));
@@ -71,19 +71,19 @@ exports.getSess = function(id){
 }
 
 //Creates session (for now syncDatabase saves it, in the future might need to syncSpecificDb)
-exports.createSess = function(gconf){
+exports.createSess = function(gconfig){
 	checkInit();
-	gconf = (gconf==null)? sessModule.gconf : gconf;
-	let game = Object.assign(new EventEmitter(),sessModule.createSession());
-	sessModule.init(game,gconf);
-	return new Promise((callback,reject) => database.insert(game.state, (err, newDoc) => {
+	gconfig = (gconfig==null)? gconf : gconfig;
+	let game = new Session();
+	game.init(gconf);
+	return new Promise((callback,reject) => database.insert(JSON.parse(JSON.stringify(game.state)), (err, newDoc) => {
 		if(err != null){
 			console.log("Unable to insert Session?");
 			reject(new Error(err));
 			return;
 			//TODO  MORE
 		}
-		exports.pushSess(newDoc._id,game);
+		module.exports.pushSess(newDoc._id,game);
 		numSessions++;
 		console.log(`Session ${newDoc._id} created.`);
 		callback(newDoc._id);
@@ -91,7 +91,7 @@ exports.createSess = function(gconf){
 }
 
 //Adds a session and sessionManager handlers for when it is deleted (playerManager will add its own too).
-exports.pushSess = function(id,sess){
+module.exports.pushSess = function(id,sess){
 	checkInit();
 	//sess.isPublic and accompanying lists are currently undefined (TODO)
 	cacheList.push(id);
@@ -121,29 +121,31 @@ exports.pushSess = function(id,sess){
 		ind5 = gidList.openGames.indexOf(id);
 		if(ind5 != -1) gidList.openGames.splice(ind5,1);
 		gidList.specGames.push(id); //TODO private games
-		sessModule.start(sess);
+		sess.start();
 		console.log(`Session ${id} started.`);
 	});
 	
 	//Handler for move being made.
 	sess.on(enums.move, (pid,move) => {
-		sessModule.setInput(sess,pid,move).catch(e => {
+		try{
+			sess.setInput(pid,move);
+		}catch(e){
 			//console.log(`${e.name}: ${pid} ${enums.move} ${move}`);
-		})
+		}
 	});
 }
 
 //Updates central database.
-exports.updateSess = function(id){
+module.exports.updateSess = function(id){
 	checkInit();
 	if(cacheList.indexOf(id) == -1) return;
-	else if(sessCache[id].players.length == 0) sessCache[id].emit(enums.ended);
-	else if(sessCache[id].state.winner != -1) sessCache[id].emit(enums.ended);
+	else if(sessCache[id].player_ids.length == 0) sessCache[id].emit(enums.ended);
+	else if(sessCache[id].state.winner != null) sessCache[id].emit(enums.ended);
 	else database.update({_id:id},sessCache[id].state);
 }
 
 //Syncs with database. Fine to send whole cache as this should consist only active sessions in the future.
-exports.syncDatabase = function(){
+module.exports.syncDatabase = function(){
 	try{
 		checkInit();
 	}catch(e){
@@ -155,28 +157,28 @@ exports.syncDatabase = function(){
 	}
 	//TODO function that checks and downloads global server
 }
-setInterval(exports.syncDatabase,25000); //30s
+setInterval(module.exports.syncDatabase,25000); //30s
 
 //Adds player/spectator to game.
-exports.joinSess = function(id,pid){
+module.exports.joinSess = function(id,pid){
 	checkInit();
 	if(gidList.allGames.indexOf(id) == -1) return Promise.reject(new Error(enums.unfound));
 	return exports.getSess(id).then(game => {
 		if(game == enums.unfound) return enums.unfound;
-		if(game.players.indexOf(pid) != -1) return game;
+		if(game.player_ids.indexOf(pid) != -1) return game;
 		if(game.isStarted){
-			if(game.specs.indexOf(pid) == -1) sessModule.addSpec(game,pid);
+			if(game.spectators.indexOf(pid) == -1) game.addSpectator(pid);
 			console.log(`Player ${pid} added to session ${id} as spectator.`);
 			return game;
 		}else{
-			sessModule.addPlayer(game,pid);
+			game.addPlayer(pid);
 			console.log(`Player ${pid} added to session ${id} as player.`);
-			if(game.numPlys == game.maxPlys) game.emit(enums.started);
+			if(game.num_players == game.max_players) game.emit(enums.started);
 			return game;
 		}
 	});
 }
 
-exports.getInfo = function(sess){
-	return sessModule.getInfo(sess);
+module.exports.getInfo = function(sess){
+	return sess.getInfo();
 }

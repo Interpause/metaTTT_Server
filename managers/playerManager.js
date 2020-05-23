@@ -1,8 +1,8 @@
 const Filter = require("bad-words");
 let filter = new Filter();
 
-const enums = require("$/common/utils/enums");
-const agents = require("$/gameAI/agents");
+const enums = require("../common/utils/enums");
+const agents = require("../gameAI/agents");
 
 global.pidList = [];
 global.numPlayers = 0;
@@ -12,23 +12,23 @@ let socks = {}; //Open response objects used in long polling
 let database = undefined;	//Currently nedb database, in future maybe some sort of service socket...
 
 //This function will likely change a lot in the future
-exports.init = function(db){
+module.exports.init = async function(db){
 	database = undefined;
 	database = db;
-	return new Promise(callback => db.find({},(err,profiles) => {
-		let i = 0;
-		let chain = Promise.resolve();
+	error = null;
+	await db.find({},async (err,profiles) => {
+		numPlayers = 0;
 		for(let profile of profiles){
 			pidList.push(profile._id);
-			chain = chain.then(() => {return exports.getPlayer(profile._id)}); //TEMP Forcefully caches everything
+			await module.exports.getPlayer(profile._id); //TEMP Forcefully caches everything
 			//TODO session calls turn on resume! if(profile.bot) profile.gidList.forEach(gid => chain = chain.then(() => return exports.runAI(profile._id,gid)));
-			i++;
+			numPlayers++;
 		}
-		numPlayers = i;
-		if(pidList.indexOf('minMax') == -1) exports.newPlayer('minMax','simpBot','pleasedontguessme',true);
+		if(pidList.indexOf('minMax') == -1) module.exports.newPlayer('minMax','simpBot','pleasedontguessme',true);
 		console.log(`${numPlayers} players in database.`);
-		chain.then(() => callback(err));
-	}));
+		error = err;
+	})
+	return error; //may just be empty
 };
 
 //Currently means server uses 2x more ram than necessary, but integral to scalable approach in future.
@@ -44,7 +44,7 @@ function checkInit(){
 }
 
 //Joins player into session and adds all relevant handlers to sess.
-exports.joinSess = function(id,gid,sess){	
+module.exports.joinSess = function(id,gid,sess){	
 	if(sess.pManagerAdded != true){
 		//Handler for when game starts. Triggers enums.turn event.
 		sess.on(enums.started, () => sess.emit(enums.turn)); //TODO smth more
@@ -56,16 +56,16 @@ exports.joinSess = function(id,gid,sess){
 		sess.on(enums.turn, () => {
 			let chain = Promise.resolve();
 			let names = [];
-			sess.players.forEach(pid => chain = chain.then(() => exports.getPlayer(pid).then(profile => names.push(profile.name))));
+			sess.player_ids.forEach(pid => chain = chain.then(() => module.exports.getPlayer(pid).then(profile => names.push(profile.name))));
 			
 			chain.then(() => {
 				let cont = {};
-				cont[enums.onlineGame] = Object.assign({},sess.state);
+				cont[enums.onlineGame] = JSON.parse(JSON.stringify(sess.state));
 				cont[enums.onlineGame].names = names;
 				cont.gid = gid;
-				sess.specs.forEach(watcher => {
-					if(watcher == "minMax") exports.runAI(watcher,sess);
-					exports.usePlayerPoll(watcher,cont)
+				sess.spectators.forEach(watcher => {
+					if(watcher == "minMax") module.exports.runAI(watcher,sess);
+					module.exports.usePlayerPoll(watcher,cont)
 				});
 			});
 		});
@@ -73,19 +73,19 @@ exports.joinSess = function(id,gid,sess){
 	sess.pManagerAdded = true;
 	
 	//Handler to remove gid from player profile when it ends.
-	if(sess.players.indexOf(id) != -1) exports.getPlayer(id).then(profile => {
+	if(sess.player_ids.indexOf(id) != -1) module.exports.getPlayer(id).then(profile => {
 		profile.gidList.push(gid);
 		sess.on(enums.ended, () => {
 			profile.gidList.splice(profile.gidList.indexOf(gid),1);
 			//TODO usePlayerPoll to send smth here?
 		});
 	});
-	exports.getPlayer(id).then(profile => profile.eventList = []);
+	module.exports.getPlayer(id).then(profile => profile.eventList = []);
 	sess.emit(enums.turn);
 }
 
 //Gets player from central database
-exports.getPlayer = function(id){
+module.exports.getPlayer = function(id){
 	checkInit();
 	if(id == null) return Promise.reject(new Error("Missing player id in param"));
 	if(pidCache[id] == undefined){
@@ -101,7 +101,7 @@ exports.getPlayer = function(id){
 }
 
 //Adds a new player.
-exports.newPlayer = function(id,name,passwd,fake){
+module.exports.newPlayer = function(id,name,passwd,fake){
 	checkInit();
 	if(pidList.indexOf(id) > -1){
 		console.log(`PID ${id} violated.`);
@@ -124,7 +124,7 @@ exports.newPlayer = function(id,name,passwd,fake){
 }
 
 //Adds long poll into socks (poll cache)
-exports.addPlayerPoll = function(id,res){
+module.exports.addPlayerPoll = function(id,res){
 	res.setTimeout(4750,() => { // Timeout (15s) is not actually necessary.
 		let cont = {};
 		cont[enums.openPoll] = enums.busy;
@@ -143,38 +143,38 @@ exports.addPlayerPoll = function(id,res){
 		socks[id].end();
 	}
 	socks[id] = res;
-	exports.getPlayer(id).then(profile => {
-		if(profile.eventList.length > 0) exports.usePlayerPoll(id,profile.eventList.shift(),true);
+	module.exports.getPlayer(id).then(profile => {
+		if(profile.eventList.length > 0) module.exports.usePlayerPoll(id,profile.eventList.shift(),true);
 	});
 }
 
 //Uses long poll for player.
-exports.usePlayerPoll = function(id, msg, isRet){
+module.exports.usePlayerPoll = function(id, msg, isRet){
 	let res = socks[id];
 	if(res != null && !res.finished){
 		res.write(JSON.stringify(msg));
 		res.end();
-	}else if(isRet == true) exports.getPlayer(id).then(profile => profile.eventList.unshift(msg));
-	else exports.getPlayer(id).then(profile => profile.eventList.push(msg));
+	}else if(isRet == true) module.exports.getPlayer(id).then(profile => profile.eventList.unshift(msg));
+	else module.exports.getPlayer(id).then(profile => profile.eventList.push(msg));
 }
 
 //Runs AI bot given id of bot and session.
-exports.runAI = function(id, sess){
+module.exports.runAI = function(id, sess){
 	if(id != "minMax") return;
-	exports.getPlayer(id).then(profile => {
+	module.exports.getPlayer(id).then(profile => {
 		if(!profile.bot) return;
 		if(sess.aiProc) return;
 		let game = sess.state;
-		if(game.cur_player != id || game.winner != -1) return;
+		if(game.cur_player != id || game.winner != null) return;
 		sess.aiProc = true;
-		agents[id](game,null,game.plyr).then(suggestion => {
+		agents[id](game,null,game.cur_player_ind).then(suggestion => {
 			sess.emit(enums.move,id,suggestion[0]);
 			sess.aiProc = false;
 		});
 	});
 }
 
-exports.syncDatabase = function(){
+module.exports.syncDatabase = function(){
 	try{
 		checkInit();
 	}catch(e){
@@ -186,5 +186,5 @@ exports.syncDatabase = function(){
 	}
 	//TODO function that checks and downloads global server
 }
-setInterval(exports.syncDatabase,25000); //25s
+setInterval(module.exports.syncDatabase,25000); //25s
 

@@ -1,7 +1,7 @@
 const http = require('http');
 const nedb = require('nedb');
 
-const enums = require("./utils/enums");
+const enums = require("./common/utils/enums");
 const sessManager = require("./managers/sessionManager");
 const playerManager = require("./managers/playerManager");
 
@@ -76,11 +76,11 @@ function getSessInfo(gid,isSpec,pid){
 		let chain = Promise.resolve();
 		if(sess == enums.unfound) return chain;
 		if(!sess.isStarted) return chain; //TODO: what about private match selection screen?
-		if(isSpec == true && sess.players.indexOf(pid) != -1) return chain;
+		if(isSpec == true && sess.player_ids.indexOf(pid) != -1) return chain;
 		
 		let info = sessManager.getInfo(sess);
 		info.names = [];
-		for(let pid of sess.players){
+		for(let pid of sess.player_ids){
 			chain = chain.then(() => {
 				return playerManager.getPlayer(pid).then(profile => info.names.push(profile.name));
 			});
@@ -177,7 +177,7 @@ function processData(req,res,data,profile){
 		
 		case enums.leave:
 			chain = chain.then(() => {return sessManager.getSess(data.gid).then(sess => {
-				if(sess.players.indexOf(data.pid) != -1){
+				if(sess.player_ids.indexOf(data.pid) != -1){
 					sess.emit(enums.ended);
 					cont[enums.leave] = enums.okay;
 				}else cont[enums.leave] = enums.error;
