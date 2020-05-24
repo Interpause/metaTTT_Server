@@ -70,6 +70,7 @@ module.exports.addPlayerWS = function(pid,sock){
 }
 
 module.exports.sendPlayer = function(pid,event,data){
+	if(socks[pid] == null) return;
 	socks[pid].send(JSON.stringify({
 		'event':event,
 		'data':data
