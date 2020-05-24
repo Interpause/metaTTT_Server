@@ -12,17 +12,7 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({noServer: true});
 
-//Adds player to session.
-function joinSession(gid,pid){
-	return sessManager.joinSess(gid,pid).then(game => {
-		if(game == enums.unfound) return;
-		playerManager.joinSess(pid,gid,game);
-		return game;
-	});
-}
-
-//Helper function
-function genRandIndex(num,length){
+function genRandIndex(num,length){ //Helper function
 	if(length <= num) return [...Array(length).keys()];
 	let done = [];
 	while(done.length != num){
@@ -32,50 +22,48 @@ function genRandIndex(num,length){
 	return done;
 }
 
+//Adds player to session.
+async function joinSession(gid,pid){
+	let game = await sessManager.joinSess(gid,pid);
+	if(game == enums.unfound) return;
+	playerManager.joinSess(pid,gid,game);
+	return game;
+}
+
 //Gets info about session open for spectating
-function getSpecSessions(pid){
+async function getSpecSessions(pid){
 	//TODO find spectator games based on skill level or popularity of players?
 	let info = {};
-	let chain = Promise.resolve();
 	let inds = genRandIndex(6,gidList.specGames.length); //6 is client limit rn
 	for(let ind of inds){
-		chain = chain.then(() => {
-			return getSessInfo(gidList.specGames[ind],true,pid).then(sessInfo => {
-				
-				if(sessInfo != null) info[gidList.specGames[ind]] = sessInfo;
-			});
-		});
+		let sessInfo = await getSessInfo(gidList.specGames[ind],true,pid);
+		if(sessInfo != null) info[gidList.specGames[ind]] = sessInfo;
 	}
-	return chain.then(() => {return info});
+	return info;
 }
 
 //Finds open session for player to join
-function getOpenSession(pid){
+async function getOpenSession(pid){
 	//TODO player score matching system
 	if(gidList.openGames.length < 1){
-		return sessManager.createSess().then(gid => {
-			wait(5000).then(() => { //Wait 5s for AI to join match.
-				if(gidList.openGames.indexOf(gid) != -1) joinSession(gid,"minMax");
-			});
-			return gid;
+		let gid = await sessManager.createSess();
+		wait(5000).then(() => { //Wait 5s for AI to join match.
+			if(gidList.openGames.indexOf(gid) != -1) joinSession(gid,"minMax");
+			//if(gidList.openGames.indexOf(gid) != -1) joinSession(gid,"abMinMax");
 		});
-	}else return Promise.resolve(gidList.openGames[0]);
+		return gid;
+	}else return gidList.openGames[0];
 }
 
 //Finds joined game data for player
-function getJoinedSessions(pid){
-	return playerManager.getPlayer(pid).then(profile => {
-		let info = {};
-		let chain = Promise.resolve();
-		for(let gid of profile.gidList){
-			chain = chain.then(() => {
-				return getSessInfo(gid).then(sessInfo => {
-					if(sessInfo != null) info[gid] = sessInfo;
-				});
-			});
-		}
-		return chain.then(() => {return info});
-	});
+async function getJoinedSessions(pid){
+	let profile = await playerManager.getPlayer(pid);
+	let info = {};
+	for(let gid of profile.gidList){
+		let sessInfo = await getSessInfo(gid);
+		if(sessInfo != null) info[gid] = sessInfo;
+	}
+	return info;
 }
 
 //Gets info of a session
@@ -154,21 +142,20 @@ wss.on("connection", ws =>{
 async function startServer(){
 	await sessManager.init(new nedb({filename:'./.data/games.db',autoload:true}));
 	await playerManager.init(new nedb({filename:'./.data/players.db',autoload:true}));
-	server.listen(8080);
-	//server.listen(process.env.PORT);
+	server.listen(process.env.PORT);
 	console.log("Listening");
 }
 
 function cleanup() {
-    //TODO tell all clients that we be closing
+	playerManager.syncDatabase();
+	sessManager.syncDatabase();
+	return;
+    /*TODO tell all clients that we be closing
 	let chain = Promise.resolve();
 	for(let gid of gidList.openGames) chain = chain.then(() => {
 		return sessManager.getSess(gid).then(sess => sess.emit(enums.ended));
 	});
-	chain.then(() => {
-		playerManager.syncDatabase();
-		sessManager.syncDatabase();
-	});	
+	*/
 }
 
 process.stdin.resume();

@@ -11,22 +11,27 @@ global.numPlayers = 0;
 let database = undefined;	//Currently nedb connection
 let socks = {};
 
+let algos = {'minMax':'simpBot','abMinMax':'ababot'};
+
 //This function will likely change a lot in the future
 module.exports.init = async function(db){
 	database = db;
-	error = null;
-	await db.find({},async (err,profiles) => {
-		numPlayers = 0;
-		error = err;
-		for(let profile of profiles){
-			pidList.push(profile._id);
-			await module.exports.getPlayer(profile._id); //TEMP Forcefully caches everything
-			//if(profile.bot) profile.gidList.forEach(gid => chain = chain.then(() => return exports.runAI(profile._id,gid)));
-			numPlayers++;
-		}
-		if(pidList.indexOf('minMax') == -1) module.exports.newPlayer('minMax','simpBot','pleasedontguessme',true);
-		console.log(`${numPlayers} players in database.`);
+	let error = null;
+	await new Promise(resolve => {
+		db.find({},async (err,profiles) => {
+			numPlayers = 0;
+			error = err;
+			for(let profile of profiles){
+				pidList.push(profile._id);
+				await module.exports.getPlayer(profile._id); //TEMP Forcefully caches everything
+				//if(profile.bot) profile.gidList.forEach(gid => chain = chain.then(() => return exports.runAI(profile._id,gid)));
+				numPlayers++;
+			}
+			for(let [algo,name] of Object.entries(algos)) if(pidList.indexOf(algo) == -1) module.exports.newPlayer(algo,name,'pleasedontguessme',true);
+			resolve();
+		});
 	});
+	console.log(`${numPlayers} players in database.`);
 	return error; //may just be empty
 };
 
@@ -97,7 +102,7 @@ module.exports.joinSess = function(id,gid,sess){
 			cont.names = names; //TODO: pid based retrieval by client
 			cont.gid = gid;
 			sess.spectators.forEach(watcher => {
-				if(watcher == "minMax") module.exports.runAI(watcher,sess);
+				if(algos[watcher] != null) module.exports.runAI(watcher,sess);
 				else module.exports.sendPlayer(watcher,enums.updateState,cont);
 			});
 		});
@@ -121,11 +126,14 @@ module.exports.getPlayer = async function(id){
 	checkInit();
 	if(id == null) throw new Error("Missing player id in param");
 	if(pidCache[id] == undefined){
-		await database.find({_id:id},(err,save) => {
-			if(save.length == 0) throw new Error(enums.unfound);
-			pidCache[id] = save[0];
-			cacheList.push(id);
+		await new Promise(resolve => {
+			database.find({_id:id},(err,save) => {
+				if(save.length == 0) throw new Error(enums.unfound);
+				pidCache[id] = save[0];
+				cacheList.push(id);
+				resolve();
 		})
+	});
 	}
 	return pidCache[id];
 }
@@ -152,7 +160,6 @@ module.exports.newPlayer = function(id,name,passwd,fake){
 
 //Runs AI bot given id of bot and session.
 module.exports.runAI = function(id, sess){
-	if(id != "minMax") return;
 	module.exports.getPlayer(id).then(profile => {
 		if(!profile.bot) return;
 		if(sess.aiProc) return;

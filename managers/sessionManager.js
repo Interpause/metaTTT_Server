@@ -12,29 +12,31 @@ global.numSessions = 0;
 let database = undefined;	//Currently nedb database, in future maybe some sort of service socket...
 
 //This function will likely change a lot in the future
-module.exports.init = function(db){
-	database = undefined;
+module.exports.init = async function(db){
 	database = db;
-	return new Promise(callback => db.find({},(err,saves) => {
-		let i = 0;
-		let chain = Promise.resolve();
-		for(let save of saves){
-			try{
-				//TODO: Private games, better save corruption checking and handling
-				//TODO: immediately returning from central database whether it is open and public etc...
-				if(save.player_ids.length < save.config.num_players) gidList.openGames.push(save._id);
-				else gidList.specGames.push(save._id);
-				gidList.allGames.push(save._id);
-				chain = chain.then(() => {return module.exports.getSess(save._id)}); //TEMP Forcefully caches everything
-				i++;
-			}catch(e){
-				console.log(`Session ${save._id} is corrupted!`);
+	let error = null;
+	await new Promise(resolve => {
+		db.find({},async (err,saves) => {
+			numSessions = 0;
+			for(let save of saves){
+				try{
+					//TODO: Private games, better save corruption checking and handling
+					//TODO: immediately returning from central database whether it is open and public etc...
+					if(save.player_ids.length < save.config.num_players) gidList.openGames.push(save._id);
+					else gidList.specGames.push(save._id);
+					gidList.allGames.push(save._id);
+					await module.exports.getSess(save._id); //TEMP Forcefully caches everything
+					numSessions++;
+				}catch(e){
+					console.log(`Session ${save._id} is corrupted!`);
+				}
 			}
-		}
-		numSessions = i;
-		console.log(`${numSessions} sessions in database.`);
-		chain.then(() => callback(err));
-	}));
+			error = err;
+			resolve();
+		});
+	});
+	console.log(`${numSessions} sessions in database.`);
+	return error;
 };
 
 //Currently means server uses 2x more ram than necessary, but integral to scalable approach in future.
@@ -50,24 +52,24 @@ function checkInit(){
 }
 
 //Returns a promise that resolves to the gameState, of course this being a reference to the actual thing
-module.exports.getSess = function(id){
+module.exports.getSess = async function(id){
 	checkInit();
-	if(id == null) return Promise.reject(new Error("Missing session id in param"));
+	if(id == null) throw new Error("Missing session id in param");
 	if(sessCache[id] == undefined){
-		return new Promise((callback,reject) => database.find({_id:id},(err,save) => {
-			if(save.length == 0){
-				//console.log(`Error ${enums.unfound}: ${id}`);
-				//reject(new Error(enums.unfound));
-				callback(enums.unfound);
-			}else{
-				let game = new Session();
-				game.restoreSession(save[0]);
-				game.start();
-				module.exports.pushSess(id,game);
-				callback(sessCache[id]);
-			}
-		}));
-	}else return Promise.resolve(sessCache[id]);
+		await new Promise(resolve => {
+			database.find({_id:id},(err,save) => {
+				if(save.length == 0) sessCache[id] = enums.unfound;
+				else{
+					let game = new Session();
+					game.restoreSession(save[0]);
+					game.start();
+					module.exports.pushSess(id,game);
+				}
+				resolve();
+		})
+	});
+	}
+	return sessCache[id];
 }
 
 //Creates session (for now syncDatabase saves it, in the future might need to syncSpecificDb)
@@ -76,6 +78,7 @@ exports.createSess = function(gconfig){
 	gconfig = (gconfig==null)? gconf : gconfig;
 	let game = new Session();
 	game.init(gconf);
+
 	return new Promise((callback,reject) => database.insert(JSON.parse(JSON.stringify(game.state)), (err, newDoc) => {
 		if(err != null){
 			console.log("Unable to insert Session?");
@@ -160,22 +163,21 @@ module.exports.syncDatabase = function(){
 setInterval(module.exports.syncDatabase,25000); //30s
 
 //Adds player/spectator to game.
-module.exports.joinSess = function(id,pid){
+module.exports.joinSess = async function(id,pid){
 	checkInit();
-	if(gidList.allGames.indexOf(id) == -1) return Promise.reject(new Error(enums.unfound));
-	return exports.getSess(id).then(game => {
-		if(game == enums.unfound) return enums.unfound;
-		if(game.player_ids.indexOf(pid) != -1) return game;
-		if(game.isStarted){
-			if(game.spectators.indexOf(pid) == -1) game.addSpectator(pid);
-			console.log(`Player ${pid} added to session ${id} as spectator.`);
-		}else{
-			game.addPlayer(pid);
-			console.log(`Player ${pid} added to session ${id} as player.`);
-			if(game.num_players == game.max_players) game.emit(enums.started);
-		}
-		return game;
-	});
+	if(gidList.allGames.indexOf(id) == -1) throw new Error(enums.unfound);
+	let game = await exports.getSess(id);
+	if(game == enums.unfound) return enums.unfound;
+	if(game.player_ids.indexOf(pid) != -1) return game;
+	if(game.isStarted){
+		if(game.spectators.indexOf(pid) == -1) game.addSpectator(pid);
+		console.log(`Player ${pid} added to session ${id} as spectator.`);
+	}else{
+		game.addPlayer(pid);
+		console.log(`Player ${pid} added to session ${id} as player.`);
+		if(game.num_players == game.max_players) game.emit(enums.started);
+	}
+	return game;
 }
 
 module.exports.getInfo = function(sess){
