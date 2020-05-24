@@ -1,33 +1,32 @@
-const Filter = require("bad-words");
-let filter = new Filter();
+const filter = new (require("bad-words"))();
+const EventEmitter = require('events');
 
 const enums = require("../common/utils/enums");
 const agents = require("../gameAI/agents");
 
 global.pidList = [];
 global.numPlayers = 0;
-let socks = {}; //Open response objects used in long polling
 
 //Local private variables
-let database = undefined;	//Currently nedb database, in future maybe some sort of service socket...
+let database = undefined;	//Currently nedb connection
+let socks = {};
 
 //This function will likely change a lot in the future
 module.exports.init = async function(db){
-	database = undefined;
 	database = db;
 	error = null;
 	await db.find({},async (err,profiles) => {
 		numPlayers = 0;
+		error = err;
 		for(let profile of profiles){
 			pidList.push(profile._id);
 			await module.exports.getPlayer(profile._id); //TEMP Forcefully caches everything
-			//TODO session calls turn on resume! if(profile.bot) profile.gidList.forEach(gid => chain = chain.then(() => return exports.runAI(profile._id,gid)));
+			//if(profile.bot) profile.gidList.forEach(gid => chain = chain.then(() => return exports.runAI(profile._id,gid)));
 			numPlayers++;
 		}
 		if(pidList.indexOf('minMax') == -1) module.exports.newPlayer('minMax','simpBot','pleasedontguessme',true);
 		console.log(`${numPlayers} players in database.`);
-		error = err;
-	})
+	});
 	return error; //may just be empty
 };
 
@@ -43,6 +42,44 @@ function checkInit(){
 	}
 }
 
+module.exports.addPlayerWS = function(pid,sock){
+	let old = socks[pid];
+	if(old != null) old.close();
+
+	let emitter = new EventEmitter();
+	sock.onmessage = raw => {
+        let msg = JSON.parse(raw.data);
+        if(Array.isArray(msg)) msg.forEach(event => emitter.emit(event.event,event.data));
+        else emitter.emit(msg.event,msg.data);
+	}
+	sock.onclose = e => {
+		sock.close();
+		emitter.removeAllListeners();
+		sock = null;
+		emitter = null;
+	}
+	emitter.on(enums.disconnect,data => sock.close());
+	emitter.pid = pid;
+	socks[pid] = sock;
+	return emitter;
+}
+
+module.exports.sendPlayer = function(pid,event,data){
+	socks[pid].send(JSON.stringify({
+		'event':event,
+		'data':data
+	}));
+}
+
+module.exports.getNamesFromIds = async function(pids){
+	let names = [];
+	for(let pid of pids){
+		let profile = await module.exports.getPlayer(pid);
+		names.push(profile.name);
+	}
+	return names;
+}
+
 //Joins player into session and adds all relevant handlers to sess.
 module.exports.joinSess = function(id,gid,sess){	
 	if(sess.pManagerAdded != true){
@@ -50,34 +87,29 @@ module.exports.joinSess = function(id,gid,sess){
 		sess.on(enums.started, () => sess.emit(enums.turn)); //TODO smth more
 		
 		//Handler for when move is made. Triggers enums.turn later. Waits for input to be set first.
-		sess.on(enums.move, (pid,move) => setTimeout(() => sess.emit(enums.turn),5)); 
+		sess.on(enums.move, (pid,move) => wait(5).then(() => sess.emit(enums.turn))); 
 		
 		//Handler to update. Sends session to all players, triggering AI as well.
-		sess.on(enums.turn, () => {
-			let chain = Promise.resolve();
-			let names = [];
-			sess.player_ids.forEach(pid => chain = chain.then(() => module.exports.getPlayer(pid).then(profile => names.push(profile.name))));
-			
-			chain.then(() => {
-				let cont = {};
-				cont[enums.onlineGame] = JSON.parse(JSON.stringify(sess.state));
-				cont[enums.onlineGame].names = names;
-				cont.gid = gid;
-				sess.spectators.forEach(watcher => {
-					if(watcher == "minMax") module.exports.runAI(watcher,sess);
-					module.exports.usePlayerPoll(watcher,cont)
-				});
+		sess.on(enums.turn, async () => {
+			let names = await module.exports.getNamesFromIds(sess.player_ids);
+			let cont = {};
+			cont = JSON.parse(JSON.stringify(sess.state));
+			cont.names = names; //TODO: pid based retrieval by client
+			cont.gid = gid;
+			sess.spectators.forEach(watcher => {
+				if(watcher == "minMax") module.exports.runAI(watcher,sess);
+				else module.exports.sendPlayer(watcher,enums.updateState,cont);
 			});
 		});
+		sess.pManagerAdded = true;
 	}
-	sess.pManagerAdded = true;
 	
 	//Handler to remove gid from player profile when it ends.
 	if(sess.player_ids.indexOf(id) != -1) module.exports.getPlayer(id).then(profile => {
 		profile.gidList.push(gid);
 		sess.on(enums.ended, () => {
 			profile.gidList.splice(profile.gidList.indexOf(gid),1);
-			//TODO usePlayerPoll to send smth here?
+			//TODO send victory message here?
 		});
 	});
 	module.exports.getPlayer(id).then(profile => profile.eventList = []);
@@ -85,28 +117,23 @@ module.exports.joinSess = function(id,gid,sess){
 }
 
 //Gets player from central database
-module.exports.getPlayer = function(id){
+module.exports.getPlayer = async function(id){
 	checkInit();
-	if(id == null) return Promise.reject(new Error("Missing player id in param"));
+	if(id == null) throw new Error("Missing player id in param");
 	if(pidCache[id] == undefined){
-		return new Promise((callback,reject) => database.find({_id:id},(err,save) => {
-			if(save.length == 0) reject(new Error(enums.unfound));
-			else{
-				pidCache[id] = save[0];
-				cacheList.push(id);
-				callback(pidCache[id]);
-			}
-		}));
-	}else return Promise.resolve(pidCache[id]);
+		await database.find({_id:id},(err,save) => {
+			if(save.length == 0) throw new Error(enums.unfound);
+			pidCache[id] = save[0];
+			cacheList.push(id);
+		})
+	}
+	return pidCache[id];
 }
 
 //Adds a new player.
 module.exports.newPlayer = function(id,name,passwd,fake){
 	checkInit();
-	if(pidList.indexOf(id) > -1){
-		console.log(`PID ${id} violated.`);
-		return;
-	}
+	if(pidList.indexOf(id) > -1) return console.log(`PID ${id} violated.`);
 	pidList.push(id);
 	pidCache[id] = {
 		gidList: [],
@@ -121,41 +148,6 @@ module.exports.newPlayer = function(id,name,passwd,fake){
 	database.insert(pidCache[id]);
 	console.log(`New device ${id} added as player.`);
 	numPlayers++;
-}
-
-//Adds long poll into socks (poll cache)
-module.exports.addPlayerPoll = function(id,res){
-	res.setTimeout(4750,() => { // Timeout (15s) is not actually necessary.
-		let cont = {};
-		cont[enums.openPoll] = enums.busy;
-		res.write(JSON.stringify(cont));
-		res.end();
-	});
-	res.on('close', () => {
-		res.end();
-		delete socks[id];
-	});
-	res.on('finish', () => delete socks[id]);
-	if(socks[id] != null && !socks[id].finished){
-		let cont = {};
-		cont[enums.openPoll] = enums.busy;
-		socks[id].write(JSON.stringify(cont));
-		socks[id].end();
-	}
-	socks[id] = res;
-	module.exports.getPlayer(id).then(profile => {
-		if(profile.eventList.length > 0) module.exports.usePlayerPoll(id,profile.eventList.shift(),true);
-	});
-}
-
-//Uses long poll for player.
-module.exports.usePlayerPoll = function(id, msg, isRet){
-	let res = socks[id];
-	if(res != null && !res.finished){
-		res.write(JSON.stringify(msg));
-		res.end();
-	}else if(isRet == true) module.exports.getPlayer(id).then(profile => profile.eventList.unshift(msg));
-	else module.exports.getPlayer(id).then(profile => profile.eventList.push(msg));
 }
 
 //Runs AI bot given id of bot and session.
@@ -187,4 +179,3 @@ module.exports.syncDatabase = function(){
 	//TODO function that checks and downloads global server
 }
 setInterval(module.exports.syncDatabase,25000); //25s
-

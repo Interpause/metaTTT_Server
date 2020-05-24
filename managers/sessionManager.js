@@ -169,13 +169,12 @@ module.exports.joinSess = function(id,pid){
 		if(game.isStarted){
 			if(game.spectators.indexOf(pid) == -1) game.addSpectator(pid);
 			console.log(`Player ${pid} added to session ${id} as spectator.`);
-			return game;
 		}else{
 			game.addPlayer(pid);
 			console.log(`Player ${pid} added to session ${id} as player.`);
 			if(game.num_players == game.max_players) game.emit(enums.started);
-			return game;
 		}
+		return game;
 	});
 }
 
