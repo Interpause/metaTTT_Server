@@ -108,4 +108,3 @@ dist
 .vscode
 *.code-workspace
 .data
-.gitmodules
