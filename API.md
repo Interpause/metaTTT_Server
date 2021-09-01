@@ -14,39 +14,39 @@
 
 In general, messages sent by the client and server over websocket take the form of:
 
-```js
-{ event:string, data:any}
+```ts
+{ event: string, data: any }
 ```
 
 Where `event` is one of the enum values found in `./common/utils/enums.js`:
 
-```js
+```ts
 const enums = {
   //Specific
-  locked:"BOARD LOCKED",
-  occupied:"SQUARE FULL",
-  started:"GAME STARTED",
-  ended:"GAME ENDED",
-  full:"GAME FULL",
-  move:"MOVE",
-  turn:"TURN",
-  unfound:"NOT FOUND LOL",
+  locked: "BOARD LOCKED",
+  occupied: "SQUARE FULL",
+  started: "GAME STARTED",
+  ended: "GAME ENDED",
+  full: "GAME FULL",
+  move: "MOVE",
+  turn: "TURN",
+  unfound: "NOT FOUND LOL",
   //General
-  okay:"OKAY",
-  error:"FAIL",
-  null:"NullPointerException",
-  info:"INFO",
-  busy:"BUSY",
+  okay: "OKAY",
+  error: "FAIL",
+  null: "NullPointerException",
+  info: "INFO",
+  busy: "BUSY",
   //Server<-->Client events
-  getSessions:"GET SESSIONS",
-  getSpecSessions:"GET SPEC SESSIONS",
-  createSession:"MAKE ME A GAME",
-  findSession:"FIND ME A GAME",
-  updateState:"STATE UPDATE",
-  join:"JOIN",
-  leave:"LEAVE",
-  disconnect:"DISCONNECTING",
-  connect:"HELLO",
+  getSessions: "GET SESSIONS",
+  getSpecSessions: "GET SPEC SESSIONS",
+  createSession: "MAKE ME A GAME",
+  findSession: "FIND ME A GAME",
+  updateState: "STATE UPDATE",
+  join: "JOIN",
+  leave: "LEAVE",
+  disconnect: "DISCONNECTING",
+  connect: "HELLO",
 }
 ```
 
@@ -56,19 +56,19 @@ Normally the message sent by the server or client in response to an `event` will
 
 When the client establishes a websocket connection with the server, the server will send:
 
-```js
-{ event:enums.connect }
+```ts
+{ event: enums.connect }
 ```
 
 The client is then expected to reply with:
 
-```js
+```ts
 {
-  event:enums.connect,
-  data:{
-    name:string,
-    pid:string,
-    passwd:string
+  event: enums.connect,
+  data: {
+    name: string,
+    pid: string,
+    passwd: string
   }
 }
 ```
@@ -77,8 +77,8 @@ The client is then expected to reply with:
 
 Finally, on successful authentication, the server replies with:
 
-```js
-{ event:enums.okay }
+```ts
+{ event: enums.okay }
 // if not successful, no reply is sent as the client is disconnected.
 ```
 
@@ -88,19 +88,15 @@ In the current [client implementation](https://github.com/Interpause/metaTTT_App
 
 The client can send this:
 
-```js
-{ event:enums.getSessions }
-//or
-{ event:enums.getSpecSessions }
+```ts
+{ event: enums.getSessions | enums.getSpecSessions }
 ```
 
 Upon which the server replies with:
 
-```js
+```ts
 {
-  event:enums.getSessions,
-  //or
-  event:enums.getSpecSessions,
+  event:enums.getSessions | enums.getSpecSessions
   data:{
     [gid:string]:{     // the keys are game ids
       cur:number,      // index of current turn's player id in names
