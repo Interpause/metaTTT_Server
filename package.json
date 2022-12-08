@@ -28,7 +28,7 @@
   "homepage": "https://github.com/Interpause/metaTTT_Server#readme",
   "dependencies": {
     "bad-words": "^3.0.3",
-    "express": "^4.17.1",
+    "express": "^4.18.2",
     "nedb": "^1.8.0",
     "ws": "^7.3.0"
   }
